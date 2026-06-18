@@ -74,7 +74,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
 
                                     if msg.action == "join_room" {
-                                        // SECURITY FIX: Evict ghost roster entries if they try to join multiple times on the same connection
                                         if let (Some(ref old_room), Some(ref old_name)) = (my_room.clone(), my_name.clone()) {
                                             if let Some(room) = rooms.get_mut(old_room) {
                                                 room.active_users.remove(old_name);
@@ -117,7 +116,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                     if msg.action == "message" && is_authenticated {
                                         if let Some(room) = rooms.get(&safe_room) {
-                                            let _ = room.tx.send(line.clone());
+                                            // 🕵️ WHISPER BLACKHOLE FIX: Check if the whisper target is actually online
+                                            if !msg.target.is_empty() && !room.active_users.contains(&msg.target.to_lowercase()) {
+                                                let err_msg = ChatMessage { 
+                                                    action: "system".to_string(), 
+                                                    room: safe_room.clone(), 
+                                                    name: "Router".to_string(), 
+                                                    target: "".to_string(), 
+                                                    content: format!("⚠️ Whisper failed: User '{}' is not in the room.", msg.target), 
+                                                    auth: "".to_string() 
+                                                };
+                                                // Send error back only to the person who whispered, don't broadcast it
+                                                let _ = writer.write_all((serde_json::to_string(&err_msg).unwrap() + "\n").as_bytes()).await;
+                                            } else {
+                                                let _ = room.tx.send(line.clone());
+                                            }
                                         }
                                     }
                                 }

@@ -26,7 +26,6 @@ fn get_bundled_tor() -> Option<std::path::PathBuf> {
     let mut exe_dir = env::current_exe().ok()?;
     exe_dir.pop();
     
-    // Exactly as you bundled it for release
     let tor_exe = exe_dir
         .join("tor")
         .join("tor")
@@ -65,7 +64,6 @@ async fn ensure_tor_running() -> Result<Option<std::process::Child>, Box<dyn std
         .stderr(Stdio::null())
         .spawn()?;
 
-    // Dynamic SOCKS proxy polling
     for _ in 0..60 {
         if TcpStream::connect("127.0.0.1:9050").await.is_ok() {
             println!("✅ Tor SOCKS proxy ready.");
@@ -74,15 +72,21 @@ async fn ensure_tor_running() -> Result<Option<std::process::Child>, Box<dyn std
         sleep(Duration::from_secs(1)).await;
     }
 
-    let _ = child.kill(); // Cleanup if it hangs
+    let _ = child.kill(); 
     Err("Tor failed to start".into())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 🧹 ZOMBIE SWEEP: Clear local ports just in case
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "tor.exe"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
     let stdin = io::stdin();
 
-    // 1. CAPTURE ARGS: Arg 1 is address, Arg 2 is Uplink URL
     let auto_addr = env::args().nth(1);
     let uplink_url = env::args().nth(2).unwrap_or_else(|| "Local".to_string());
 
@@ -100,15 +104,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Negotiating connection to {}...", server_addr);
 
-    // ==========================================
-    // THE DARKNET ROUTER (Self-Sufficient)
-    // ==========================================
     let mut tor_child = None;
 
     let (read_half, mut writer) = if server_addr.ends_with(".onion") {
         println!("🧅 Darknet link detected. Locating Tor daemon...");
         
-        // FIX: The host forwards port 80 to its local server. We must dial 80.
         if !server_addr.contains(':') { server_addr = format!("{}:80", server_addr); }
 
         match ensure_tor_running().await {
@@ -144,9 +144,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut reader = BufReader::new(read_half);
     
-    // ==========================================
-    // HANDSHAKE
-    // ==========================================
     let list_req = ChatMessage { action: "list_rooms".to_string(), room: String::new(), name: String::new(), target: String::new(), content: String::new(), auth: String::new() };
     writer.write_all((serde_json::to_string(&list_req)? + "\n").as_bytes()).await?;
 
@@ -358,7 +355,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         else if !trimmed.is_empty() { let _ = tx_net.send(trimmed.clone()); }
                         input_buffer.clear();
                     }
-                    KeyCode::Char(c) => { input_buffer.push(c); }
+                    KeyCode::Char(c) => { 
+                        // 🛡️ SECURITY FIX: Cap the input to 1024 chars to prevent memory overload DoS attacks
+                        if input_buffer.len() < 1024 {
+                            input_buffer.push(c); 
+                        }
+                    }
                     KeyCode::Backspace => { input_buffer.pop(); }
                     KeyCode::Esc => { break; }
                     _ => {}
@@ -370,7 +372,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen)?;
 
-    // CLEANUP Tor process if we spawned it from the client
     if let Some(mut child) = tor_child {
         let _ = child.kill();
     }

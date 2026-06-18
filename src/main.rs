@@ -6,6 +6,13 @@ use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 🧹 ZOMBIE SWEEP: Kill any left-over Tor instances from previous crashes
+    let _ = Command::new("taskkill")
+        .args(["/F", "/IM", "tor.exe"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
     let stdin = io::stdin();
 
     println!("========================================");
@@ -62,6 +69,16 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
     let mut port = String::new();
     stdin.read_line(&mut port)?;
     let port = if port.trim().is_empty() { "3000" } else { port.trim() }.to_string();
+
+    // 🛡️ PORT CHECK: Ensure the port is actually free before we launch the server
+    {
+        let check = std::net::TcpListener::bind(format!("127.0.0.1:{}", port));
+        if check.is_err() {
+            println!("❌ Port {} is already in use by another application.", port);
+            println!("Please close the conflicting app or choose a different port.");
+            return Ok(());
+        }
+    } // The test listener drops here, freeing the port for the actual server
 
     // 1. START SERVER FIRST
     let mut exe_dir = env::current_exe()?; exe_dir.pop();
@@ -140,7 +157,7 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
         let tor_exe = match get_bundled_tor() {
             Some(path) => path,
             None => {
-                println!("❌ Tor Browser not found beside AIRAA.");
+                println!("❌ Tor daemon not found beside AIRAA.");
                 let _ = server_child.kill();
                 return Ok(());
             }
@@ -152,12 +169,6 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
         
         let hs_dir_abs = fs::canonicalize(&hs_dir).unwrap_or(hs_dir);
         let torrc_path = tor_dir.join("torrc");
-        // FIX: virtual port must be 80, matching the default port the
-        // client assumes when a user enters a bare ".onion" address
-        // (see client.rs: `if !server_addr.contains(':') { ... :80 }`).
-        // It was previously 9001, which meant Tor had no route for any
-        // connection arriving on the default port 80, so all incoming
-        // Tor connections silently failed.
         let torrc_content = format!(
             "SocksPort 9050\n\
              HiddenServiceDir {}\n\
@@ -167,7 +178,6 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
         );
         fs::write(&torrc_path, torrc_content)?;
 
-        // LOGGING FIX: Redirect Tor logs to file instead of console
         let tor_log = fs::File::create("airaa_tor.log")?;
         
         println!("Spawning Tor Hidden Service (Logs stored in airaa_tor.log)...");
@@ -199,7 +209,7 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
     let client_exe = exe_dir.join(format!("client{}", env::consts::EXE_SUFFIX));
     let mut client_child = Command::new(&client_exe)
         .arg(format!("127.0.0.1:{}", port))
-        .arg(&uplink_url) // NEW: Pass the uplink URL to the client
+        .arg(&uplink_url)
         .spawn()?;
     let _ = client_child.wait();
 
@@ -213,6 +223,7 @@ async fn host_and_chat() -> Result<(), Box<dyn std::error::Error>> {
 async fn join_network() -> Result<(), Box<dyn std::error::Error>> {
     let mut exe_dir = env::current_exe()?; exe_dir.pop();
     let client_exe = exe_dir.join(format!("client{}", env::consts::EXE_SUFFIX));
-    let _ = Command::new(&client_exe).spawn()?.wait();
+    let mut client_child = Command::new(&client_exe).spawn()?;
+    let _ = client_child.wait();
     Ok(())
 }
