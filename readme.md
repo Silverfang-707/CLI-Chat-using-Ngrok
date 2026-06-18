@@ -140,14 +140,12 @@ AIRAA/
 ├── airaa-chat.exe
 ├── server.exe
 ├── client.exe
-└── Tor Browser/
-    └── Browser/
-        └── TorBrowser/
-            └── Tor/
-                ├── tor.exe
-                ├── geoip
-                ├── geoip6
-                └── ...
+└── tor/
+    └── tor/
+        ├── tor.exe
+        ├── geoip
+        ├── geoip6
+        └── ...
 ```
 
 Download Tor Browser:

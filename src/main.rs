@@ -47,10 +47,8 @@ fn get_bundled_tor() -> Option<std::path::PathBuf> {
     let mut exe_dir = env::current_exe().ok()?;
     exe_dir.pop();
     let tor_exe = exe_dir
-        .join("Tor Browser")
-        .join("Browser")
-        .join("TorBrowser")
-        .join("Tor")
+        .join("tor")
+        .join("tor")
         .join(format!("tor{}", env::consts::EXE_SUFFIX));
 
     if tor_exe.exists() { Some(tor_exe) } else { None }
