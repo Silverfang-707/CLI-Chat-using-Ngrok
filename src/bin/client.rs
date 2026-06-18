@@ -6,11 +6,13 @@ use crossterm::{
 };
 use ratatui::{prelude::*, widgets::*};
 use std::env;
+use std::fs;
 use std::io::{self, Write};
+use std::process::{Command, Stdio};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, sleep, Duration};
 use tokio_socks::tcp::Socks5Stream;
 
 enum UiMsg {
@@ -18,6 +20,62 @@ enum UiMsg {
     Public(String, String),
     Whisper { sender: String, recipient: String, text: String, is_outgoing: bool },
     Error(String),
+}
+
+fn get_bundled_tor() -> Option<std::path::PathBuf> {
+    let mut exe_dir = env::current_exe().ok()?;
+    exe_dir.pop();
+    
+    // Exactly as you bundled it for release
+    let tor_exe = exe_dir
+        .join("tor")
+        .join("tor")
+        .join(format!("tor{}", env::consts::EXE_SUFFIX));
+        
+    if tor_exe.exists() { Some(tor_exe) } else { None }
+}
+
+async fn ensure_tor_running() -> Result<Option<std::process::Child>, Box<dyn std::error::Error>> {
+    if TcpStream::connect("127.0.0.1:9050").await.is_ok() {
+        return Ok(None); // Tor is already running
+    }
+
+    println!("🧅 Starting bundled Tor daemon...");
+
+    let tor_exe = match get_bundled_tor() {
+        Some(path) => path,
+        None => {
+            println!("========================================");
+            println!("TOR DAEMON NOT FOUND");
+            println!("========================================");
+            println!("Missing: tor/tor/tor.exe");
+            return Err("Tor daemon missing from release bundle".into());
+        }
+    };
+
+    let tor_dir = env::current_exe()?.parent().unwrap().join("airaa_client_tor");
+    fs::create_dir_all(&tor_dir)?;
+    let torrc = tor_dir.join("torrc");
+    fs::write(&torrc, "SocksPort 9050\nLog notice stdout\n")?;
+
+    let mut child = Command::new(&tor_exe)
+        .current_dir(tor_exe.parent().unwrap())
+        .args(["-f", torrc.to_str().unwrap()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    // Dynamic SOCKS proxy polling
+    for _ in 0..60 {
+        if TcpStream::connect("127.0.0.1:9050").await.is_ok() {
+            println!("✅ Tor SOCKS proxy ready.");
+            return Ok(Some(child));
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    let _ = child.kill(); // Cleanup if it hangs
+    Err("Tor failed to start".into())
 }
 
 #[tokio::main]
@@ -43,24 +101,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Negotiating connection to {}...", server_addr);
 
     // ==========================================
-    // THE DARKNET ROUTER
+    // THE DARKNET ROUTER (Self-Sufficient)
     // ==========================================
+    let mut tor_child = None;
+
     let (read_half, mut writer) = if server_addr.ends_with(".onion") {
-        println!("🧅 Darknet link detected. Locating local Tor SOCKS5 proxy...");
+        println!("🧅 Darknet link detected. Locating Tor daemon...");
+        
+        // FIX: The host forwards port 80 to its local server. We must dial 80.
         if !server_addr.contains(':') { server_addr = format!("{}:80", server_addr); }
 
-        let proxy_stream = match Socks5Stream::connect("127.0.0.1:9050", server_addr.as_str()).await {
-            Ok(s) => s.into_inner(),
-            Err(_) => {
-                println!("❌ Could not connect to local Tor daemon on port 9050.");
+        match ensure_tor_running().await {
+            Ok(child_opt) => tor_child = child_opt,
+            Err(e) => {
+                println!("❌ {} - Check if Tor is blocked by your firewall.", e);
+                std::thread::sleep(std::time::Duration::from_secs(5));
                 return Ok(());
             }
+        }
+
+        let stream = match Socks5Stream::connect("127.0.0.1:9050", server_addr.as_str()).await {
+            Ok(s) => s.into_inner(),
+            Err(_) => { 
+                println!("❌ Connection to Hidden Service failed. The host might be offline."); 
+                std::thread::sleep(std::time::Duration::from_secs(4));
+                if let Some(mut child) = tor_child { let _ = child.kill(); }
+                return Ok(()); 
+            }
         };
-        proxy_stream.into_split()
+        stream.into_split()
     } else {
         let stream = match TcpStream::connect(&server_addr).await {
             Ok(s) => s,
-            Err(_) => { println!("❌ Connection failed."); return Ok(()); }
+            Err(_) => { 
+                println!("❌ Connection failed."); 
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                return Ok(()); 
+            }
         };
         stream.into_split()
     };
@@ -107,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("Enter new room name: "); io::stdout().flush()?;
                 let mut input_room = String::new(); stdin.read_line(&mut input_room)?;
                 let trimmed = input_room.trim().to_lowercase();
-                if active_rooms.contains(&trimmed) { println!("⚠️ Room exists!"); } else if trimmed.is_empty() { println!("❌ Empty."); } else { break trimmed; }
+                if active_rooms.contains(&trimmed) { println!("⚠️ Room exists! Use option 1 to join it."); } else if trimmed.is_empty() { println!("❌ Empty."); } else { break trimmed; }
             }
             _ => println!("❌ Invalid choice."),
         }
@@ -231,7 +308,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([Constraint::Length(4), Constraint::Min(1), Constraint::Length(4)].as_ref())
                 .split(f.size());
 
-            // HEADER UPDATED: Now displays uplink_url
             let header_text = format!(
                 " Airaa Grid | Uplink: {} | Room: {} | Cmds: /h Help | /u Users | /w Whisper | /!exit! Quit | ESC Exit ",
                 uplink_url,
@@ -293,5 +369,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen)?;
+
+    // CLEANUP Tor process if we spawned it from the client
+    if let Some(mut child) = tor_child {
+        let _ = child.kill();
+    }
+
     Ok(())
 }
