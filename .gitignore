@@ -1,0 +1,84 @@
+# Rust
+
+/target
+Cargo.lock
+
+# IDE
+
+.vscode/
+.idea/
+
+# OS Files
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+
+*.log
+
+# Environment
+
+.env
+.env.local
+
+# Temporary Files
+
+*.tmp
+*.temp
+
+# Rust Analyzer
+
+.rust-analyzer/
+
+# Build Artifacts
+
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# AIRAA Runtime Data
+
+airaa_tor_config/
+config/
+
+# Generated Hidden Services
+
+hidden_service/
+
+# Local User Data
+
+users.db
+rooms.db
+
+# Ngrok Config (contains auth token)
+
+config/ngrok_token.txt
+
+# Tor Browser Bundle
+
+Tor Browser/
+
+# Release Packages
+
+*.zip
+*.7z
+
+# Backup Files
+
+*.bak
+*.old
+
+# JetBrains
+
+*.iml
+
+# Visual Studio
+
+.vs/
+
+# Terminal History
+
+.history

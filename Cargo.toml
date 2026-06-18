@@ -1,0 +1,19 @@
+[package]
+name = "airaa-chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+aes-gcm = "0.10.3"
+sha2 = "0.10.8"
+pbkdf2 = "0.12.2"
+base64 = "0.22.1"
+reqwest = { version = "0.13", features = ["json","blocking"] }
+crossterm = "0.27"
+ratatui = "0.26"
+tokio-socks = "0.5.2" # NEW: For Tor Routing
+zip = "2"
+futures-util = "0.3"
